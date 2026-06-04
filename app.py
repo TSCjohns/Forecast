@@ -128,6 +128,7 @@ def build_forecast_figure(
     history: pd.DataFrame,
     forecast: pd.DataFrame,
     title: str,
+    holidays_df: pd.DataFrame | None = None,
 ) -> go.Figure:
     """Plotly chart with history, forecast, and confidence band."""
     split = history["ds"].max()
@@ -194,6 +195,30 @@ def build_forecast_figure(
         annotation_text="forecast start",
         annotation_position="top",
     )
+
+    # Event markers (if any)
+    if holidays_df is not None and not holidays_df.empty:
+        forecast_end = forecast["ds"].max()
+        history_start = history["ds"].min()
+        # Color per unique event so users can distinguish them
+        palette = ["#993556", "#854F0B", "#3B6D11", "#534AB7", "#A32D2D"]
+        for i, name in enumerate(holidays_df["holiday"].unique()):
+            color = palette[i % len(palette)]
+            occurrences = holidays_df.loc[holidays_df["holiday"] == name, "ds"]
+            for j, ev_date in enumerate(occurrences):
+                if ev_date < history_start or ev_date > forecast_end:
+                    continue  # out of plotted range
+                fig.add_vline(
+                    x=ev_date,
+                    line_dash="dash",
+                    line_color=color,
+                    line_width=1,
+                    opacity=0.6,
+                    annotation_text=name if j == 0 else None,
+                    annotation_position="bottom",
+                    annotation_font_size=10,
+                    annotation_font_color=color,
+                )
 
     fig.update_layout(
         title=title,
@@ -384,31 +409,85 @@ with st.sidebar.expander("Advanced model controls"):
 
 with st.sidebar.expander("Custom events / promos"):
     st.caption(
-        "Add known one-off spikes (e.g. promos, channel launches). "
-        "These are treated as 'holidays' by Prophet."
+        "Flag specific **months** that had unusual spikes — a one-off promo, "
+        "a product launch, an inventory disruption. **Don't use this for "
+        "events that happen every year on similar dates (Black Friday, "
+        "holiday season) — yearly seasonality already handles those.**"
     )
     events_text = st.text_area(
-        "One per line: name, YYYY-MM-DD",
+        "One per line: name, YYYY-MM",
         value="",
-        placeholder="amazon_prime_day, 2024-07-16\nblack_friday, 2024-11-29",
+        placeholder="big_promo, 2024-03\nproduct_launch, 2024-09",
         height=100,
+        help="Day part of the date is ignored — data is monthly, so the event applies to the whole month.",
+    )
+    annual_recurrence = st.checkbox(
+        "Repeat annually in forecast",
+        value=False,
+        help=(
+            "If checked, each event is replicated in the same month of every "
+            "future year through the forecast horizon. Use this if the promo "
+            "is expected to recur. If unchecked, the event is treated as "
+            "one-off and only affects the historical fit."
+        ),
     )
 
-# Parse events
+# Parse events — snap to first-of-month (data is monthly) and optionally expand annually
 holidays_df = None
+parse_warnings: list[str] = []
+event_info: list[dict] = []  # for the main-page feedback block
+
 if events_text.strip():
-    rows = []
-    for line in events_text.strip().splitlines():
+    raw_rows = []
+    for line_no, line in enumerate(events_text.strip().splitlines(), start=1):
+        line = line.strip()
+        if not line:
+            continue
         parts = [p.strip() for p in line.split(",")]
-        if len(parts) == 2:
-            try:
-                rows.append({"holiday": parts[0], "ds": pd.to_datetime(parts[1])})
-            except Exception:  # noqa: BLE001
-                pass
-    if rows:
-        holidays_df = pd.DataFrame(rows)
+        if len(parts) != 2:
+            parse_warnings.append(f"Line {line_no}: expected `name, YYYY-MM`")
+            continue
+        try:
+            dt = pd.to_datetime(parts[1])
+            snapped = pd.Timestamp(year=dt.year, month=dt.month, day=1)
+            raw_rows.append({"holiday": parts[0], "ds": snapped})
+        except Exception:  # noqa: BLE001
+            parse_warnings.append(f"Line {line_no}: couldn't parse date `{parts[1]}`")
+
+    if raw_rows:
+        expanded_rows = list(raw_rows)
+        if annual_recurrence:
+            hist_start = df_long["ds"].min()
+            forecast_end = df_long["ds"].max() + pd.DateOffset(months=horizon)
+            for row in raw_rows:
+                # extend backward through history
+                d = row["ds"] - pd.DateOffset(years=1)
+                while d >= hist_start:
+                    expanded_rows.append({"holiday": row["holiday"], "ds": d})
+                    d = d - pd.DateOffset(years=1)
+                # extend forward through forecast horizon
+                d = row["ds"] + pd.DateOffset(years=1)
+                while d <= forecast_end:
+                    expanded_rows.append({"holiday": row["holiday"], "ds": d})
+                    d = d + pd.DateOffset(years=1)
+
+        holidays_df = (
+            pd.DataFrame(expanded_rows)
+            .drop_duplicates(subset=["holiday", "ds"])
+            .reset_index(drop=True)
+        )
         holidays_df["lower_window"] = 0
-        holidays_df["upper_window"] = 1
+        holidays_df["upper_window"] = 0
+
+        # Build per-event info for the main-page feedback block
+        for name in holidays_df["holiday"].unique():
+            occurrences = holidays_df.loc[holidays_df["holiday"] == name, "ds"].sort_values()
+            event_info.append(
+                {
+                    "name": name,
+                    "occurrences": occurrences.tolist(),
+                }
+            )
 
 # ----------------------------- Main page -----------------------------------
 
@@ -471,9 +550,107 @@ k5.metric(
 # ----- Main chart
 
 fig = build_forecast_figure(
-    series, forecast, title=f"{scope_descriptor} ({channel_descriptor}) — monthly units"
+    series,
+    forecast,
+    title=f"{scope_descriptor} ({channel_descriptor}) — monthly units",
+    holidays_df=holidays_df,
 )
 st.plotly_chart(fig, use_container_width=True)
+
+# ----- Events feedback (only shown if user added any)
+
+if parse_warnings:
+    for w in parse_warnings:
+        st.warning(f"Event parse: {w}")
+
+if holidays_df is not None and not holidays_df.empty:
+    st.subheader("Custom events")
+    hist_start = series["ds"].min()
+    hist_end = series["ds"].max()
+    forecast_end = forecast["ds"].max()
+
+    event_rows = []
+    for name in holidays_df["holiday"].unique():
+        all_occ = holidays_df.loc[holidays_df["holiday"] == name, "ds"].sort_values()
+        in_history = [d for d in all_occ if hist_start <= d <= hist_end]
+        in_future = [d for d in all_occ if hist_end < d <= forecast_end]
+        out_of_range = [d for d in all_occ if d < hist_start or d > forecast_end]
+
+        # Status message
+        if not in_history and not in_future:
+            status = "⚠ all occurrences outside data range — no effect"
+        elif not in_history:
+            status = "⚠ no historical occurrence — model can't learn a lift"
+        elif not in_future:
+            status = "ℹ historical only — affects fit, not forecast"
+        else:
+            status = "✓ active in history and forecast"
+
+        # Show first and last occurrence for context
+        first = all_occ.iloc[0].strftime("%b %Y")
+        last = all_occ.iloc[-1].strftime("%b %Y")
+        when = first if first == last else f"{first} → {last}"
+
+        event_rows.append(
+            {
+                "Event": name,
+                "Occurrences": when,
+                "In history": len(in_history),
+                "In forecast": len(in_future),
+                "Status": status,
+            }
+        )
+
+        if out_of_range:
+            dates_str = ", ".join(d.strftime("%b %Y") for d in out_of_range)
+            st.caption(f"  • `{name}` — these occurrences fall outside the data/forecast range and are ignored: {dates_str}")
+
+    st.dataframe(pd.DataFrame(event_rows), use_container_width=True, hide_index=True)
+
+    st.caption(
+        "Look at the dashed colored lines on the forecast chart above — "
+        "each event is marked at its occurrence months."
+    )
+
+    with st.expander("Why doesn't my event change the forecast much?"):
+        st.markdown(
+            """
+This is the most common surprise with this feature. A few reasons it can happen:
+
+- **Yearly seasonality already explains it.** If your event happens on
+  similar dates every year, Prophet's yearly seasonality has already
+  absorbed the pattern. The named event ends up redundant — the bump
+  still shows up in the forecast, it's just attributed to the *yearly*
+  component instead of the *event* component. For annually-recurring
+  events, custom events are usually unnecessary.
+
+- **One-off historical events don't affect the forecast.** If you enter
+  a single past event with no future occurrences, Prophet learns its
+  effect during fitting but has no future date to apply that effect to.
+  The historical fit will look different but the forecast won't move.
+  To make a one-off event change the forecast, you need to schedule it
+  in the **future** too — either by enabling *Repeat annually in forecast*
+  or by adding future dates explicitly.
+
+- **Only one occurrence in history.** With a single data point, Prophet
+  stays close to its prior (near zero) unless the spike is enormous.
+  Multiple historical occurrences help the model converge on a real lift.
+
+- **The data is noisy at that scope.** A single SKU × single channel
+  series may be too noisy for the model to confidently attribute a lift.
+  Try aggregating to bottle size or total demand.
+
+**When custom events are actually useful for monthly data:**
+- A one-off future event you know is coming (a launch, a new channel)
+  with one or two recent historical analogues — enable *Repeat annually
+  in forecast* and reduce the *Seasonality strength* slider so the event
+  gets credit instead of yearly.
+- An event with shifting dates that yearly seasonality can't track
+  (e.g., Lunar New Year shifts between January and February).
+- A historical disruption you want to flag so it doesn't pollute the
+  trend (e.g., a stockout month). Add it as a past-only event.
+"""
+        )
 
 # ----- Components
 

@@ -313,19 +313,42 @@ st.sidebar.subheader("2. What to forecast")
 
 all_parts = sorted(df_long["part_number"].unique().tolist())
 all_orgs = sorted(df_long["org"].unique().tolist())
+all_sizes = sorted(df_long["bottle_size"].unique().tolist())
 
 view_mode = st.sidebar.radio(
     "View",
-    ["Total demand (all SKUs × all channels)", "Pick specific SKUs / channels"],
+    ["Single SKU", "By bottle size", "Total demand"],
     index=0,
+    help=(
+        "Single SKU: one product at a time. "
+        "By bottle size: aggregate every SKU of one bottle size. "
+        "Total demand: everything combined."
+    ),
 )
 
-if view_mode.startswith("Total"):
+if view_mode == "Single SKU":
+    sel_part = st.sidebar.selectbox("SKU", all_parts, index=0)
+    sel_parts = [sel_part]
+    scope_descriptor = sel_part
+elif view_mode == "By bottle size":
+    sel_size = st.sidebar.selectbox("Bottle size", all_sizes, index=0)
+    sel_parts = sorted(
+        df_long.loc[df_long["bottle_size"] == sel_size, "part_number"]
+        .unique()
+        .tolist()
+    )
+    scope_descriptor = f"all {sel_size} SKUs ({len(sel_parts)})"
+else:  # Total demand
     sel_parts = all_parts
-    sel_orgs = all_orgs
-else:
-    sel_parts = st.sidebar.multiselect("SKUs", all_parts, default=all_parts)
-    sel_orgs = st.sidebar.multiselect("Channels", all_orgs, default=all_orgs)
+    scope_descriptor = f"all {len(all_parts)} SKUs"
+
+channel_choice = st.sidebar.radio(
+    "Channel",
+    ["All channels"] + all_orgs,
+    index=0,
+)
+sel_orgs = all_orgs if channel_choice == "All channels" else [channel_choice]
+channel_descriptor = "all channels" if channel_choice == "All channels" else channel_choice
 
 # ----- Model knobs
 
@@ -397,7 +420,7 @@ st.caption(
 )
 
 if not sel_parts or not sel_orgs:
-    st.warning("Pick at least one SKU and one channel in the sidebar.")
+    st.warning("No SKUs match the current selection. Try a different bottle size or view.")
     st.stop()
 
 series = aggregate_series(df_long, sel_parts, sel_orgs)
@@ -432,11 +455,7 @@ fc_avg = fc_future["yhat"].mean()
 fc_total = fc_future["yhat"].sum()
 growth_pct = (fc_avg - hist_avg) / hist_avg * 100 if hist_avg else 0
 
-scope_label = (
-    "All SKUs · All channels"
-    if view_mode.startswith("Total")
-    else f"{len(sel_parts)} SKU(s) · {len(sel_orgs)} channel(s)"
-)
+scope_label = f"{scope_descriptor} · {channel_descriptor}"
 st.markdown(f"**Scope:** {scope_label}")
 
 k1, k2, k3, k4, k5 = st.columns(5)
@@ -452,12 +471,9 @@ k5.metric(
 
 # ----- Main chart
 
-title_scope = (
-    "Total demand"
-    if view_mode.startswith("Total")
-    else f"{', '.join(sel_parts[:3])}{'…' if len(sel_parts) > 3 else ''}"
+fig = build_forecast_figure(
+    series, forecast, title=f"{scope_descriptor} ({channel_descriptor}) — monthly units"
 )
-fig = build_forecast_figure(series, forecast, title=f"{title_scope} — monthly units")
 st.plotly_chart(fig, use_container_width=True)
 
 # ----- Components

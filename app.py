@@ -537,24 +537,25 @@ d2.download_button(
 # ----- Footer
 
 st.divider()
-with st.expander("About this tool"):
+with st.expander("about prophet"):
     st.markdown(
         """
-This forecasting tool uses [Facebook Prophet](https://facebook.github.io/prophet/),
-an additive time-series model that decomposes sales into **trend + seasonality
-+ holidays + noise**.
+This forecasting tool uses Prophet
 
-**Why Prophet for fulfillment forecasting:**
-- Handles missing data and outliers gracefully
-- Built-in seasonality detection (yearly, weekly)
-- Supports custom event spikes (promotions, channel launches)
-- Produces confidence intervals — useful for safety-stock decisions
+Prophet is a procedure for forecasting time series data based on an additive model 
+where non-linear trends are fit with yearly, weekly, and daily seasonality, 
+plus holiday effects. It works best with time series that have strong seasonal 
+effects and several seasons of historical data. Prophet is robust to missing 
+data and shifts in the trend, and typically handles outliers well.
 
-**Caveats for the team:**
+Prophet is open source software released by Facebook's Core Data Science team .
+
+Full documentation and examples available at the homepage: https://facebook.github.io/prophet/
+
+Caveats:
 - The model assumes the future looks roughly like the past. Step-changes
   (new channel, new product line, major supply disruption) need to be
   reflected manually via the events panel or by re-fitting on relevant data.
-- Confidence intervals widen quickly past ~12 months. Treat long-horizon
-  forecasts as directional, not operational.
+- Confidence intervals widen quickly past ~12 months
 """
     )

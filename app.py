@@ -494,7 +494,7 @@ if events_text.strip():
 st.title("Monthly demand forecast")
 st.caption(
     "Historical sales drive a Prophet model that projects forward by your "
-    "chosen horizon. Adjust the controls in the sidebar to explore scenarios."
+    "chosen horizon. Adjust the controls in the sidebar to change scenarios."
 )
 
 if not sel_parts or not sel_orgs:
@@ -506,7 +506,7 @@ series = aggregate_series(df_long, sel_parts, sel_orgs)
 if len(series) < 12:
     st.error(
         f"Only {len(series)} months of data after filtering — need at least 12. "
-        "Broaden your selection."
+
     )
     st.stop()
 
@@ -612,38 +612,37 @@ if holidays_df is not None and not holidays_df.empty:
         "each event is marked at its occurrence months."
     )
 
-    with st.expander("Why doesn't my event change the forecast much?"):
+    with st.expander("event not changing the forecast explanation"):
         st.markdown(
             """
-This is the most common surprise with this feature. A few reasons it can happen:
+  NOTE: This is a Claude interpretation of the prophet docs:
+            
+- If event happens on similar dates every year, 
+  Prophet seasonality has already captures the pattern. 
+  the bump still shows up in the forecast, it's just attributed to the yearly
+  component instead of the event component. "For annually-recurring
+  events, custom events are usually unnecessary."
 
-- **Yearly seasonality already explains it.** If your event happens on
-  similar dates every year, Prophet's yearly seasonality has already
-  absorbed the pattern. The named event ends up redundant — the bump
-  still shows up in the forecast, it's just attributed to the *yearly*
-  component instead of the *event* component. For annually-recurring
-  events, custom events are usually unnecessary.
-
-- **One-off historical events don't affect the forecast.** If you enter
+- One-off historical events don't affect the forecast. If you enter
   a single past event with no future occurrences, Prophet learns its
   effect during fitting but has no future date to apply that effect to.
   The historical fit will look different but the forecast won't move.
   To make a one-off event change the forecast, you need to schedule it
-  in the **future** too — either by enabling *Repeat annually in forecast*
+  in the future either by enabling "Repeat annually in forecast"
   or by adding future dates explicitly.
 
-- **Only one occurrence in history.** With a single data point, Prophet
+- Only one occurrence in history. With a single data point, Prophet
   stays close to its prior (near zero) unless the spike is enormous.
-  Multiple historical occurrences help the model converge on a real lift.
+  Multiple historical occurrences help the model.
 
-- **The data is noisy at that scope.** A single SKU × single channel
+- The data is noisy at that scope. A single SKU × single channel
   series may be too noisy for the model to confidently attribute a lift.
   Try aggregating to bottle size or total demand.
 
-**When custom events are actually useful for monthly data:**
+When custom events are actually useful for monthly data:
 - A one-off future event you know is coming (a launch, a new channel)
-  with one or two recent historical analogues — enable *Repeat annually
-  in forecast* and reduce the *Seasonality strength* slider so the event
+  with one or two recent historical analogues — enable "Repeat annually
+  in forecast" and reduce the "Seasonality strength" slider so the event
   gets credit instead of yearly.
 - An event with shifting dates that yearly seasonality can't track
   (e.g., Lunar New Year shifts between January and February).
@@ -717,7 +716,7 @@ st.divider()
 with st.expander("about prophet"):
     st.markdown(
         """
-This forecasting tool uses Prophet
+This forecasting tool uses Prophet. Info from Prophet docs:
 
 Prophet is a procedure for forecasting time series data based on an additive model 
 where non-linear trends are fit with yearly, weekly, and daily seasonality, 

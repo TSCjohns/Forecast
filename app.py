@@ -24,8 +24,7 @@ from prophet import Prophet
 # ----------------------------- Page config ---------------------------------
 
 st.set_page_config(
-    page_title="Fulfillment Forecast",
-    page_icon="📦",
+    page_title="internal forecast tool",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -273,8 +272,8 @@ def build_components_figure(forecast: pd.DataFrame, has_yearly: bool) -> go.Figu
 
 # ----------------------------- Sidebar -------------------------------------
 
-st.sidebar.title("📦 Fulfillment forecast")
-st.sidebar.caption("Powered by Prophet")
+st.sidebar.title("internal forecast tool")
+st.sidebar.caption("prophet library")
 
 st.sidebar.subheader("1. Data source")
 uploaded = st.sidebar.file_uploader(
